@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Transkription mit Pausenerkennung</title>
+    <style>
+        #volume-visualizer {
+            width: 100%;
+            height: 20px;
+            background-color: lightgray;
+            margin-top: 20px;
+        }
+
+        #volume-bar {
+            height: 100%;
+            width: 0%;
+            background-color: green;
+        }
+
+        .slider-container {
+            margin-top: 20px;
+        }
+
+        .slider-label {
+            font-weight: bold;
+        }
+
+        .slider-value {
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Transkription mit Pausenerkennung</h1>
+    <button id="start-recording">Aufnahme starten</button>
+    <button id="stop-recording" disabled>Aufnahme stoppen</button>
+
+    <div id="recognized-text">Erkannter Text: </div>
+
+    <!-- Auswahl des Modells -->
+    <div>
+        <label for="model-select">Modell auswählen:</label>
+        <select id="model-select">
+            <option value="vosk">Vosk</option>
+            <option value="whisper">Whisper</option>
+        </select>
+    </div>
+
+    <!-- Visualizer für die Audio-Lautstärke -->
+    <div id="volume-visualizer">
+        <div id="volume-bar"></div>
+    </div>
+
+    <!-- Slider für Stille-Schwellenwert -->
+    <div class="slider-container">
+        <label for="silence-threshold-slider" class="slider-label">Stille-Schwellenwert (Lautstärke):</label>
+        <input type="range" id="silence-threshold-slider" min="50" max="255" value="100">
+        <span id="silence-threshold-value" class="slider-value">100</span>
+    </div>
+
+    <!-- Slider für Stille-Dauer -->
+    <div class="slider-container">
+        <label for="silence-duration-slider" class="slider-label">Stille-Dauer (ms):</label>
+        <input type="range" id="silence-duration-slider" min="500" max="3000" step="100" value="1000">
+        <span id="silence-duration-value" class="slider-value">1000 ms</span>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        let lastAudioSentTime = 0;
+        let silenceTimeout;
+
+        // Initiale Einstellungen für Stille
+        let silenceThreshold = 100;  // Standard-Schwellenwert für Stille (0-255)
+        let silenceDuration = 1000;  // Standard-Stille-Dauer in Millisekunden
+
+        // DOM-Elemente
+        const startButton = document.getElementById('start-recording');
+        const stopButton = document.getElementById('stop-recording');
+        const recognizedTextDiv = document.getElementById('recognized-text');
+        const volumeBar = document.getElementById('volume-bar');
+        const silenceThresholdSlider = document.getElementById('silence-threshold-slider');
+        const silenceThresholdValue = document.getElementById('silence-threshold-value');
+        const silenceDurationSlider = document.getElementById('silence-duration-slider');
+        const silenceDurationValue = document.getElementById('silence-duration-value');
+        const modelSelect = document.getElementById('model-select');
+
+        // Update Slider-Anzeige
+        silenceThresholdSlider.addEventListener('input', () => {
+            silenceThreshold = parseInt(silenceThresholdSlider.value);
+            silenceThresholdValue.textContent = silenceThreshold;
+        });
+
+        silenceDurationSlider.addEventListener('input', () => {
+            silenceDuration = parseInt(silenceDurationSlider.value);
+            silenceDurationValue.textContent = silenceDuration + ' ms';
+        });
+
+        startButton.addEventListener('click', async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const audioContext = new AudioContext();
+            const mediaStreamSource = audioContext.createMediaStreamSource(stream);
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 2048;
+            mediaStreamSource.connect(analyser);
+            
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.start();
+
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            isRecording = true;
+
+            mediaRecorder.ondataavailable = (event) => {
+                audioChunks.push(event.data);
+            };
+
+            // Überwache die Audiopegel kontinuierlich
+            monitorAudioLevel(analyser);
+        });
+
+        stopButton.addEventListener('click', () => {
+            mediaRecorder.stop();
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            isRecording = false;
+        });
+
+        function monitorAudioLevel(analyser) {
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            const checkSilence = () => {
+                analyser.getByteTimeDomainData(dataArray);
+                let maxVolume = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const volume = dataArray[i];
+                    maxVolume = Math.max(maxVolume, volume);
+                }
+
+                // Aktualisiere die visuelle Darstellung der Lautstärke
+                const volumePercentage = (maxVolume / 255) * 100;
+                volumeBar.style.width = volumePercentage + '%';
+                volumeBar.style.backgroundColor = maxVolume < silenceThreshold ? 'red' : 'green';
+
+                if (maxVolume < silenceThreshold) {
+                    // Wenn der Pegel unter dem Schwellenwert liegt, ist es still
+                    if (!silenceTimeout) {
+                        silenceTimeout = setTimeout(() => {
+                            if (isRecording && mediaRecorder.state === "recording") {
+                                sendAudioChunk();
+                            }
+                        }, silenceDuration);  // Wenn die Stille länger als die eingestellte Dauer dauert
+                    }
+                } else {
+                    // Es gibt Ton, also zurücksetzen
+                    if (silenceTimeout) {
+                        clearTimeout(silenceTimeout);
+                        silenceTimeout = null;
+                    }
+                }
+
+                if (isRecording) {
+                    requestAnimationFrame(checkSilence);
+                }
+            };
+
+            checkSilence();
+        }
+
+        function sendAudioChunk() {
+            if (audioChunks.length > 0) {
+                const blob = new Blob(audioChunks, { type: 'audio/wav' });
+                const formData = new FormData();
+                formData.append('file', blob, 'recording.wav');
+
+                // Sende die Modellauswahl mit
+                const selectedModel = modelSelect.value;
+                formData.append('model', selectedModel);
+
+                // Sende die Audiodatei und das Modell an den Server zur Transkription
+                fetch('/transcribe_chunk', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    recognizedTextDiv.innerText += ' ' + data.recognized_text;
+                });
+
+                // Nach dem Senden der Audiodaten die Chunks leeren
+                audioChunks = [];
+            }
+        }
+    </script>
+</body>
+</html>
