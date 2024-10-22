@@ -1,4 +1,4 @@
-Down load the appropiate model from https://alphacephei.com/vosk/models and place the content of mdoel archive in models/vosk
+Down load the appropiate model from https://alphacephei.com/vosk/models and place the content of model archive in models/vosk
 
 ```bash
 docker build -t vosk-stt-service .
