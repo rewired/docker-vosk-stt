@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech-to-Text with Vosk and Whisper</title>
+</head>
+<body>
+    <h1>Speech-to-Text Service</h1>
+    
+    <!-- Audio Recorder Widget -->
+    <div>
+        <button id="start-recording" onclick="startRecording()">Start Recording</button>
+        <button id="stop-recording" onclick="stopRecording()" disabled>Stop Recording</button>
+        <select id="transcriptor">
+            <option value="vosk">Vosk</option>
+            <option value="whisper">Whisper</option>
+        </select>
+    </div>
+
+    <p id="status">Recorder idle...</p>
+    
+    <h3>Transcription Result:</h3>
+    <div id="transcript"></div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        function startRecording() {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.start();
+                    document.getElementById("status").textContent = "Recording...";
+                    document.getElementById("start-recording").disabled = true;
+                    document.getElementById("stop-recording").disabled = false;
+                    
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+
+                    isRecording = true;
+                })
+                .catch(error => {
+                    console.error('Error accessing microphone:', error);
+                    alert('Could not access microphone. Please allow microphone access.');
+                });
+        }
+
+        function stopRecording() {
+            if (isRecording && mediaRecorder) {
+                mediaRecorder.stop();
+                document.getElementById("status").textContent = "Recording stopped.";
+                document.getElementById("start-recording").disabled = false;
+                document.getElementById("stop-recording").disabled = true;
+
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    const formData = new FormData();
+                    formData.append('file', audioBlob, 'recording.wav');
+
+                    const transcriptor = document.getElementById("transcriptor").value;
+                    const urlSuffix = transcriptor === "whisper" ? "/transcribe_whisper" : "/transcribe_vosk";
+
+                    document.getElementById("transcript").textContent = '... Transcribing audio ...';
+                    
+                    // Send the audio blob to the server                    
+                    fetch(urlSuffix, {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById("transcript").textContent = data.corrected_text || JSON.stringify(data, null, 2);
+                    })
+                    .catch(error => {
+                        console.error('Error transcribing audio:', error);
+                        document.getElementById("transcript").textContent = 'Error transcribing audio.';
+                    });
+                };
+
+                isRecording = false;
+            }
+        }
+    </script>
+</body>
+</html>
