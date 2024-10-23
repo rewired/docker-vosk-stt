@@ -1,90 +1,154 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Speech-to-Text with Vosk and Whisper</title>
+    <title>Live Transkription</title>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f4f4f9;
+        }
+
+        .container {
+            text-align: center;
+            padding: 20px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .record-button {
+            border: none;
+            color: white;
+            padding: 20px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 36px;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            width: 80px;
+            height: 80px;
+        }
+
+        .record-button.mic-on {
+            background-color: green;
+        }
+
+        .record-button.mic-off {
+            background-color: red;
+        }
+
+        .record-button .material-symbols-outlined {
+            font-size: 64px; /* Schriftgröße für das Icon */
+        }
+
+        .model-selection {
+            margin: 20px 0;
+        }
+
+        .model-selection label {
+            font-weight: bold;
+        }
+
+        .recognized-text {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            text-align: left;
+        }
+    </style>
 </head>
 <body>
-    <h1>Speech-to-Text Service</h1>
-    
-    <!-- Audio Recorder Widget -->
-    <div>
-        <button id="start-recording" onclick="startRecording()">Start Recording</button>
-        <button id="stop-recording" onclick="stopRecording()" disabled>Stop Recording</button>
-        <select id="transcriptor">
-            <option value="vosk">Vosk</option>
-            <option value="whisper">Whisper</option>
-        </select>
-    </div>
 
-    <p id="status">Recorder idle...</p>
-    
-    <h3>Transcription Result:</h3>
-    <div id="transcript"></div>
+    <div class="container">
+        <h1>Live Transkription</h1>
+
+        <!-- Runder Button für Start/Stop der Aufnahme -->
+        <button id="record-button" class="record-button mic-on">
+            <span class="material-symbols-outlined">mic</span>
+        </button>
+
+        <!-- Auswahl des Modells -->
+        <div class="model-selection">
+            <label for="model-select">Modell auswählen:</label>
+            <select id="model-select">
+                <option value="vosk">Vosk</option>
+                <option value="whisper">Whisper</option>
+            </select>
+        </div>
+
+        <!-- Bereich für erkannte Texte -->
+        <div class="recognized-text" id="recognized-text">Erkannter Text: </div>
+    </div>
 
     <script>
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
 
-        function startRecording() {
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    mediaRecorder = new MediaRecorder(stream);
-                    mediaRecorder.start();
-                    document.getElementById("status").textContent = "Recording...";
-                    document.getElementById("start-recording").disabled = true;
-                    document.getElementById("stop-recording").disabled = false;
-                    
-                    audioChunks = [];
-                    mediaRecorder.ondataavailable = event => {
-                        audioChunks.push(event.data);
-                    };
+        // DOM-Elemente
+        const recordButton = document.getElementById('record-button');
+        const recognizedTextDiv = document.getElementById('recognized-text');
+        const modelSelect = document.getElementById('model-select');
 
-                    isRecording = true;
-                })
-                .catch(error => {
-                    console.error('Error accessing microphone:', error);
-                    alert('Could not access microphone. Please allow microphone access.');
-                });
-        }
+        recordButton.addEventListener('click', async () => {
+            if (!isRecording) {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.start();
 
-        function stopRecording() {
-            if (isRecording && mediaRecorder) {
-                mediaRecorder.stop();
-                document.getElementById("status").textContent = "Recording stopped.";
-                document.getElementById("start-recording").disabled = false;
-                document.getElementById("stop-recording").disabled = true;
-
-                mediaRecorder.onstop = () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                    const formData = new FormData();
-                    formData.append('file', audioBlob, 'recording.wav');
-
-                    const transcriptor = document.getElementById("transcriptor").value;
-                    const urlSuffix = transcriptor === "whisper" ? "/transcribe_whisper" : "/transcribe_vosk";
-
-                    document.getElementById("transcript").textContent = '... Transcribing audio ...';
-                    
-                    // Send the audio blob to the server                    
-                    fetch(urlSuffix, {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        document.getElementById("transcript").textContent = data.corrected_text || JSON.stringify(data, null, 2);
-                    })
-                    .catch(error => {
-                        console.error('Error transcribing audio:', error);
-                        document.getElementById("transcript").textContent = 'Error transcribing audio.';
-                    });
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
                 };
 
+                mediaRecorder.onstop = async () => {
+                    const blob = new Blob(audioChunks, { type: 'audio/wav' });
+                    audioChunks = [];
+                    sendAudio(blob);
+                };
+
+                recordButton.classList.remove('mic-on');
+                recordButton.classList.add('mic-off');
+                recordButton.innerHTML = '<span class="material-symbols-outlined">mic_off</span>';
+                isRecording = true;
+            } else {
+                mediaRecorder.stop();
+
+                recordButton.classList.remove('mic-off');
+                recordButton.classList.add('mic-on');
+                recordButton.innerHTML = '<span class="material-symbols-outlined">mic</span>';
                 isRecording = false;
             }
+        });
+
+        function sendAudio(blob) {
+            const formData = new FormData();
+            formData.append('file', blob, 'recording.wav');
+
+            // Sende die Modellauswahl mit
+            const selectedModel = modelSelect.value;
+            let route = selectedModel === 'vosk' ? '/transcribe_vosk' : '/transcribe_whisper';
+
+            // Sende die Audiodatei und das Modell an den Server zur Transkription
+            fetch(route, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                recognizedTextDiv.innerText += ' ' + data.recognized_text;
+            });
         }
     </script>
+
 </body>
 </html>
